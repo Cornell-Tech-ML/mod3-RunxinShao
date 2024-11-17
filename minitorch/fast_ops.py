@@ -159,7 +159,7 @@ def tensor_map(
         Tensor map function.
 
     """
-
+    f = njit(fn) 
     def _map(
         out: Storage,
         out_shape: Shape,
@@ -168,8 +168,15 @@ def tensor_map(
         in_shape: Shape,
         in_strides: Strides,
     ) -> None:
-        # TODO: Implement for Task 3.1.
-        raise NotImplementedError("Need to implement for Task 3.1")
+        size = np.prod(out_shape)
+        for i in prange(size):  # 并行化主循环
+            out_index = np.empty_like(out_shape)
+            to_index(i, out_shape, out_index)
+            in_index = np.empty_like(in_shape)
+            broadcast_index(out_index, out_shape, in_shape, in_index)
+            out_pos = index_to_position(out_index, out_strides)
+            in_pos = index_to_position(in_index, in_strides)
+            out[out_pos] = f(in_storage[in_pos])
 
     return njit(_map, parallel=True)  # type: ignore
 
@@ -196,7 +203,7 @@ def tensor_zip(
         Tensor zip function.
 
     """
-
+    f = njit(fn)
     def _zip(
         out: Storage,
         out_shape: Shape,
@@ -208,8 +215,19 @@ def tensor_zip(
         b_shape: Shape,
         b_strides: Strides,
     ) -> None:
-        # TODO: Implement for Task 3.1.
-        raise NotImplementedError("Need to implement for Task 3.1")
+        size = np.prod(out_shape)
+        for i in prange(size):  # 并行化主循环
+            out_index = np.empty_like(out_shape)
+            to_index(i, out_shape, out_index)
+            a_index = np.empty_like(a_shape)
+            broadcast_index(out_index, out_shape, a_shape, a_index)
+            b_index = np.empty_like(b_shape)
+            broadcast_index(out_index, out_shape, b_shape, b_index)
+            out_pos = index_to_position(out_index, out_strides)
+            a_pos = index_to_position(a_index, a_strides)
+            b_pos = index_to_position(b_index, b_strides)
+            out[out_pos] = f(a_storage[a_pos], b_storage[b_pos])
+        
 
     return njit(_zip, parallel=True)  # type: ignore
 
@@ -234,7 +252,7 @@ def tensor_reduce(
         Tensor reduce function
 
     """
-
+    f = njit(fn)
     def _reduce(
         out: Storage,
         out_shape: Shape,
@@ -244,8 +262,17 @@ def tensor_reduce(
         a_strides: Strides,
         reduce_dim: int,
     ) -> None:
-        # TODO: Implement for Task 3.1.
-        raise NotImplementedError("Need to implement for Task 3.1")
+        size = np.prod(out_shape)
+        for i in prange(size):  # 并行化主循环
+            out_index = np.empty_like(out_shape)
+            to_index(i, out_shape, out_index)
+            out_pos = index_to_position(out_index, out_strides)
+            for j in range(a_shape[reduce_dim]):  # 内循环非并行
+                a_index = np.array(out_index)
+                a_index[reduce_dim] = j
+                a_pos = index_to_position(a_index, a_strides)
+                out[out_pos] = f(out[out_pos], a_storage[a_pos])
+        
 
     return njit(_reduce, parallel=True)  # type: ignore
 
