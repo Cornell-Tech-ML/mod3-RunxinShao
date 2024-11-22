@@ -11,7 +11,7 @@ if numba.cuda.is_available():
 
 def default_log_fn(epoch, total_loss, correct, losses, epoch_time=0):
     print(
-        f"Epoch {epoch}: loss={total_loss:.4f}, correct={correct}, time per epoch={epoch_time:.4f}s"
+        f"Epoch {epoch}: loss={total_loss:.4f}, correct={correct}, time ={epoch_time:.4f}s"
     )
 
 
