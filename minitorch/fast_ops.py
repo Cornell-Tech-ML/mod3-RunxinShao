@@ -12,6 +12,9 @@ from .tensor_data import (
     index_to_position,
     shape_broadcast,
     to_index,
+    Storage,
+    Shape,
+    Strides,
 )
 from .tensor_ops import MapProto, TensorOps
 
@@ -19,7 +22,7 @@ if TYPE_CHECKING:
     from typing import Callable, Optional
 
     from .tensor import Tensor
-    from .tensor_data import Index, Shape, Storage, Strides
+    from .tensor_data import Shape, Storage, Strides
 
 # TIP: Use `NUMBA_DISABLE_JIT=1 pytest tests/ -m task3_1` to run these tests without JIT.
 
@@ -138,6 +141,15 @@ class FastOps(TensorOps):
 
 # Implementations
 def tensor_map(fn: Callable[[float], float]) -> Callable[[Storage, Shape, Strides, Storage, Shape, Strides], None]:
+    """Apply a unary function element-wise to a tensor.
+    
+    Args:
+        fn: Unary function to apply element-wise
+        
+    Returns:
+        Callable that applies the function to tensor storage
+
+    """
     def _map(
         out: Storage,
         out_shape: Shape,
@@ -181,6 +193,15 @@ def tensor_map(fn: Callable[[float], float]) -> Callable[[Storage, Shape, Stride
     return njit(_map, parallel=True)
 
 def tensor_zip(fn: Callable[[float, float], float]) -> Callable[[Storage, Shape, Strides, Storage, Shape, Strides, Storage, Shape, Strides], None]:
+    """Apply a binary function element-wise between two tensors.
+    
+    Args:
+        fn: Binary function to apply element-wise
+        
+    Returns:
+        Callable that applies the function between two tensor storages
+
+    """
     def _zip(
         out: Storage,
         out_shape: Shape,
@@ -233,6 +254,15 @@ def tensor_zip(fn: Callable[[float, float], float]) -> Callable[[Storage, Shape,
     return njit(_zip, parallel=True)
 
 def tensor_reduce(fn: Callable[[float, float], float]) -> Callable[[Storage, Shape, Strides, Storage, Shape, Strides, int], None]:
+    """Apply a reduction function along a dimension of a tensor.
+    
+    Args:
+        fn: Binary reduction function to apply
+        
+    Returns:
+        Callable that reduces the tensor along the specified dimension
+
+    """
     def _reduce(
         out: Storage,
         out_shape: Shape,
@@ -263,11 +293,6 @@ def tensor_reduce(fn: Callable[[float, float], float]) -> Callable[[Storage, Sha
             out[out_pos] = result
 
     return njit(_reduce, parallel=True)
-
-
-
-from numba import njit, prange
-from .tensor_data import Storage, Shape, Strides
 
 @njit(parallel=True)
 def _tensor_matrix_multiply(

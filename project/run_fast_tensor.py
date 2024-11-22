@@ -1,12 +1,14 @@
 import random
+import time  # Import the time module
 import numba
 import minitorch
-import time  # Import the time module
-import matplotlib
+
 datasets = minitorch.datasets
-FastTensorBackend = minitorch.TensorBackend(minitorch.FastOps)
+
+# Updated TensorBackend to include backend_type attribute
+FastTensorBackend = minitorch.TensorBackend(minitorch.FastOps, backend_type="cpu")
 if numba.cuda.is_available():
-    GPUBackend = minitorch.TensorBackend(minitorch.CudaOps)
+    GPUBackend = minitorch.TensorBackend(minitorch.CudaOps, backend_type="gpu")
 
 
 def default_log_fn(epoch, total_loss, correct, losses):
@@ -48,8 +50,9 @@ class Linear(minitorch.Module):
 
 
 class FastTrain:
-    def __init__(self, hidden_layers, backend=FastTensorBackend):
+    def __init__(self, hidden_layers, backend=FastTensorBackend, backend_name="cpu"):
         self.hidden_layers = hidden_layers
+        self.backend_name = backend.backend_type  # Fixed backend type
         self.model = Network(hidden_layers, backend)
         self.backend = backend
 
@@ -65,8 +68,7 @@ class FastTrain:
         BATCH = 10
         losses = []
 
-        # Start timing
-        start_time = time.time()
+        start_time = time.time()  # Start timing the training process
 
         for epoch in range(max_epochs):
             total_loss = 0.0
@@ -76,10 +78,10 @@ class FastTrain:
 
             for i in range(0, len(X_shuf), BATCH):
                 optim.zero_grad()
-                X = minitorch.tensor(X_shuf[i : i + BATCH], backend=self.backend)
-                y = minitorch.tensor(y_shuf[i : i + BATCH], backend=self.backend)
-                # Forward
+                X = minitorch.tensor(X_shuf[i: i + BATCH], backend=self.backend)
+                y = minitorch.tensor(y_shuf[i: i + BATCH], backend=self.backend)
 
+                # Forward
                 out = self.model.forward(X).view(y.shape[0])
                 prob = (out * y) + (out - 1.0) * (y - 1.0)
                 loss = -prob.log()
@@ -91,6 +93,7 @@ class FastTrain:
                 optim.step()
 
             losses.append(total_loss)
+
             # Logging
             if epoch % 10 == 0 or epoch == max_epochs:
                 X = minitorch.tensor(data.X, backend=self.backend)
@@ -100,23 +103,22 @@ class FastTrain:
                 correct = int(((out.detach() > minitorch.tensor(0.5)) == y2).sum()[0])
                 log_fn(epoch, total_loss, correct, losses)
 
-        # End timing
-        end_time = time.time()
+        end_time = time.time()  # End timing the training process
         total_time = end_time - start_time
-        print(f"Total training time on {self.backend.backend}: {total_time:.4f} seconds")
-        return total_time
+
+        print(f"Total training time on {self.backend_name}: {total_time:.4f} seconds")
 
 
 if __name__ == "__main__":
     import argparse
-    import matplotlib.pyplot as plt
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--PTS", type=int, default=50, help="number of points")
     parser.add_argument("--HIDDEN", type=int, default=10, help="number of hiddens")
     parser.add_argument("--RATE", type=float, default=0.05, help="learning rate")
+    parser.add_argument("--BACKEND", default="cpu", help="backend mode")
     parser.add_argument("--DATASET", default="simple", help="dataset")
-    parser.add_argument("--BACKEND", type=str, default="cpu", help="backend mode (cpu or gpu)")
+
     args = parser.parse_args()
 
     PTS = args.PTS
@@ -131,20 +133,6 @@ if __name__ == "__main__":
     HIDDEN = int(args.HIDDEN)
     RATE = args.RATE
 
-    # Train on CPU
-    print("Training on CPU...")
-    cpu_time = FastTrain(HIDDEN, backend=FastTensorBackend).train(data, RATE)
+    backend = FastTensorBackend if args.BACKEND == "cpu" else GPUBackend
 
-    # Train on GPU
-    if numba.cuda.is_available():
-        print("Training on GPU...")
-        gpu_time = FastTrain(HIDDEN, backend=GPUBackend).train(data, RATE)
-
-    # Visualization
-    plt.figure(figsize=(8, 5))
-    labels = ["CPU", "GPU"]
-    times = [cpu_time, gpu_time]
-    plt.bar(labels, times, color=["blue", "orange"])
-    plt.ylabel("Training Time (seconds)")
-    plt.title("CPU vs GPU Training Time")
-    plt.show()
+    FastTrain(HIDDEN, backend=backend).train(data, RATE)

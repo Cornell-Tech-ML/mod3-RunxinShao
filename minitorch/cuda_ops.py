@@ -391,7 +391,6 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
         size (int): size of the square
 
     """
-
     # TODO: Implement for Task 3.3.
     BLOCK_DIM = 32  
 
