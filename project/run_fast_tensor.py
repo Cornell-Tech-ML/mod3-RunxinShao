@@ -2,7 +2,7 @@ import random
 import numba
 import minitorch
 import time  # Import the time module
-
+import matplotlib
 datasets = minitorch.datasets
 FastTensorBackend = minitorch.TensorBackend(minitorch.FastOps)
 if numba.cuda.is_available():
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     parser.add_argument("--HIDDEN", type=int, default=10, help="number of hiddens")
     parser.add_argument("--RATE", type=float, default=0.05, help="learning rate")
     parser.add_argument("--DATASET", default="simple", help="dataset")
-
+    parser.add_argument("--BACKEND", type=str, default="cpu", help="backend mode (cpu or gpu)")
     args = parser.parse_args()
 
     PTS = args.PTS
