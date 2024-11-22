@@ -1,3 +1,10 @@
+"""MiniTorch is a minimal implementation of the PyTorch deep learning framework.
+
+This package provides core functionality for building and training neural networks,
+including automatic differentiation, tensor operations, optimization, and datasets.
+It supports both CPU and CUDA backends for accelerated computation.
+"""
+
 from .testing import MathTest, MathTestVariable  # type: ignore # noqa: F401,F403
 from .fast_ops import *  # noqa: F401,F403
 from .cuda_ops import *  # noqa: F401,F403

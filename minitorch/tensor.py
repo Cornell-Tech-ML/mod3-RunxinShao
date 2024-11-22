@@ -320,7 +320,6 @@ class Tensor:
     def __lt__(self, other: TensorLike) -> Tensor:
         """Less than comparison between two tensors."""
         return LT.apply(self, self._ensure_tensor(other))
-   
 
     def __eq__(self, other: TensorLike) -> Tensor:
         """Equal comparison between two tensors."""

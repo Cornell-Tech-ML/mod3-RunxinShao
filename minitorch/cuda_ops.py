@@ -1,7 +1,7 @@
 # type: ignore
 # Currently pyright doesn't support numba.cuda
 
-from typing import Callable, Optional, TypeVar, Any
+from typing import Callable, Optional, TypeVar, Any, Dict
 
 import numba
 from numba import cuda
@@ -29,11 +29,35 @@ FakeCUDAKernel = Any
 Fn = TypeVar("Fn")
 
 
-def device_jit(fn: Fn, **kwargs) -> Fn:
+def device_jit(fn: Fn, **kwargs: Dict[str, Any]) -> Fn:
+    """Decorator to JIT compile a function for CUDA device execution.
+
+    Args:
+    ----
+        fn: Function to compile
+        kwargs: Additional arguments to pass to numba.cuda.jit
+
+    Returns:
+    -------
+        JIT compiled function for CUDA device
+
+    """
     return _jit(device=True, **kwargs)(fn)  # type: ignore
 
 
-def jit(fn, **kwargs) -> FakeCUDAKernel:
+def jit(fn: Callable, **kwargs: Dict[str, Any]) -> FakeCUDAKernel:
+    """Decorator to JIT compile a function for CUDA execution.
+
+    Args:
+    ----
+        fn: Function to compile
+        kwargs: Additional arguments to pass to numba.cuda.jit
+
+    Returns:
+    -------
+        JIT compiled CUDA kernel
+
+    """
     return _jit(**kwargs)(fn)  # type: ignore
 
 
@@ -67,6 +91,17 @@ class CudaOps(TensorOps):
 
     @staticmethod
     def zip(fn: Callable[[float, float], float]) -> Callable[[Tensor, Tensor], Tensor]:
+        """Applies a binary function element-wise across two tensors.
+
+        Args:
+        ----
+            fn: Binary function to apply element-wise
+
+        Returns:
+        -------
+            Function that takes two tensors and returns result tensor
+
+        """
         cufn: Callable[[float, float], float] = device_jit(fn)
         f = tensor_zip(cufn)
 
@@ -86,6 +121,18 @@ class CudaOps(TensorOps):
     def reduce(
         fn: Callable[[float, float], float], start: float = 0.0
     ) -> Callable[[Tensor, int], Tensor]:
+        """Reduces a tensor along a dimension using a binary function.
+
+        Args:
+        ----
+            fn: Binary reduction function
+            start: Initial value for reduction
+
+        Returns:
+        -------
+            Function that takes tensor and dimension and returns reduced tensor
+
+        """
         cufn: Callable[[float, float], float] = device_jit(fn)
         f = tensor_reduce(cufn)
 
@@ -106,6 +153,18 @@ class CudaOps(TensorOps):
 
     @staticmethod
     def matrix_multiply(a: Tensor, b: Tensor) -> Tensor:
+        """Performs matrix multiplication of two tensors.
+
+        Args:
+        ----
+            a: First tensor
+            b: Second tensor
+
+        Returns:
+        -------
+            Result of matrix multiplication
+
+        """
         # Make these always be a 3 dimensional multiply
         both_2d = 0
         if len(a.shape) == 2:
@@ -180,9 +239,6 @@ def tensor_map(
             in_pos = index_to_position(in_index, in_strides)
             out[out_pos] = fn(in_storage[in_pos])
 
-
-       
-
     return cuda.jit()(_map)  # type: ignore
 
 
@@ -231,13 +287,11 @@ def tensor_zip(
             b_pos = index_to_position(b_index, b_strides)
             out[out_pos] = fn(a_storage[a_pos], b_storage[b_pos])
 
-       
-
     return cuda.jit()(_zip)  # type: ignore
 
 
 def _sum_practice(out: Storage, a: Storage, size: int) -> None:
-    """This is a practice sum kernel to prepare for reduce.
+    r"""Practice sum kernel to prepare for reduce.
 
     Given an array of length $n$ and out of size $n // \text{blockDIM}$
     it should sum up each blockDim values into an out cell.
@@ -286,10 +340,22 @@ def _sum_practice(out: Storage, a: Storage, size: int) -> None:
     if thread_id == 0:
         out[cuda.blockIdx.x] = cache[0]
 
+
 jit_sum_practice = cuda.jit()(_sum_practice)
 
 
 def sum_practice(a: Tensor) -> TensorData:
+    """Perform practice sum reduction on tensor.
+
+    Args:
+    ----
+        a: Input tensor
+
+    Returns:
+    -------
+        Reduced tensor data
+
+    """
     (size,) = a.shape
     threadsperblock = THREADS_PER_BLOCK
     blockspergrid = (size // THREADS_PER_BLOCK) + 1
@@ -333,7 +399,6 @@ def tensor_reduce(
         block_id = cuda.blockIdx.x
         if block_id < out_size:
             out_index = cuda.local.array(MAX_DIMS, numba.int32)
-            in_index = cuda.local.array(MAX_DIMS, numba.int32)
             to_index(block_id, out_shape, out_index)
             cache[i] = reduce_value
 
@@ -354,14 +419,11 @@ def tensor_reduce(
                 out_pos = index_to_position(out_index, out_strides)
                 out[out_pos] = cache[0]
 
-     
-        
-
     return jit(_reduce)  # type: ignore
 
 
 def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
-    """This is a practice square MM kernel to prepare for matmul.
+    r"""Practice square MM kernel to prepare for matmul.
 
     Given a storage `out` and two storage `a` and `b`. Where we know
     both are shape [size, size] with strides [size, 1].
@@ -392,7 +454,7 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
 
     """
     # TODO: Implement for Task 3.3.
-    BLOCK_DIM = 32  
+    BLOCK_DIM = 32
 
     # Shared memory for tiles of matrices a and b
     shared_a = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
@@ -427,12 +489,23 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
     if row < size and col < size:
         out[row * size + col] = result
 
-    
 
 jit_mm_practice = jit(_mm_practice)
 
 
 def mm_practice(a: Tensor, b: Tensor) -> TensorData:
+    """Perform practice matrix multiplication on tensors.
+
+    Args:
+    ----
+        a: First input tensor
+        b: Second input tensor
+
+    Returns:
+    -------
+        Result tensor data
+
+    """
     (size, _) = a.shape
     threadsperblock = (THREADS_PER_BLOCK, THREADS_PER_BLOCK)
     blockspergrid = 1
@@ -472,7 +545,7 @@ def _tensor_matrix_multiply(
     Returns:
         None : Fills in `out`
     """
-     # Define block size
+    # Define block size
     BLOCK_SIZE = 32
 
     # Determine the batch index
@@ -539,7 +612,6 @@ def _tensor_matrix_multiply(
         out_index[1] = global_row
         out_index[2] = global_col
         out[index_to_position(out_index, out_strides)] = result
-
 
 
 tensor_matrix_multiply = jit(_tensor_matrix_multiply)
