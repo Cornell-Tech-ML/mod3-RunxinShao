@@ -1,7 +1,7 @@
 import random
 import numba
 import minitorch
-import time  # Import the time module
+import time
 
 datasets = minitorch.datasets
 FastTensorBackend = minitorch.TensorBackend(minitorch.FastOps)
@@ -9,8 +9,10 @@ if numba.cuda.is_available():
     GPUBackend = minitorch.TensorBackend(minitorch.CudaOps)
 
 
-def default_log_fn(epoch, total_loss, correct, losses,epoch_time=0):
-    print("Epoch ", epoch, " loss ", total_loss, "correct", correct,f"time per epoch{epoch_time:.4f}s")
+def default_log_fn(epoch, total_loss, correct, losses, epoch_time=0):
+    print(
+        f"Epoch {epoch}: loss={total_loss:.4f}, correct={correct}, time per epoch={epoch_time:.4f}s"
+    )
 
 
 def RParam(*shape, backend):
@@ -64,8 +66,10 @@ class FastTrain:
         optim = minitorch.SGD(self.model.parameters(), learning_rate)
         BATCH = 10
         losses = []
-        epoch_start_time = time.time()
+
         for epoch in range(max_epochs):
+            epoch_start_time = time.time()  # 开始计时
+
             total_loss = 0.0
             c = list(zip(data.X, data.y))
             random.shuffle(c)
@@ -76,7 +80,6 @@ class FastTrain:
                 X = minitorch.tensor(X_shuf[i : i + BATCH], backend=self.backend)
                 y = minitorch.tensor(y_shuf[i : i + BATCH], backend=self.backend)
                 # Forward
-
                 out = self.model.forward(X).view(y.shape[0])
                 prob = (out * y) + (out - 1.0) * (y - 1.0)
                 loss = -prob.log()
@@ -87,15 +90,18 @@ class FastTrain:
                 # Update
                 optim.step()
 
+            epoch_end_time = time.time()  # 结束计时
+            epoch_time = epoch_end_time - epoch_start_time  # 计算耗时
+
             losses.append(total_loss)
             # Logging
-            if epoch % 10 == 0 or epoch == max_epochs:
+            if epoch % 10 == 0 or epoch == max_epochs - 1:
                 X = minitorch.tensor(data.X, backend=self.backend)
                 y = minitorch.tensor(data.y, backend=self.backend)
                 out = self.model.forward(X).view(y.shape[0])
                 y2 = minitorch.tensor(data.y)
                 correct = int(((out.detach() > minitorch.tensor(0.5)) == y2).sum()[0])
-                log_fn(epoch, total_loss, correct, losses)
+                log_fn(epoch, total_loss, correct, losses, epoch_time=epoch_time)
 
 
 if __name__ == "__main__":
