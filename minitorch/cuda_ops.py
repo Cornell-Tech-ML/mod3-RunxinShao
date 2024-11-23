@@ -452,39 +452,37 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
     """
     # TODO: Implement for Task 3.3.
     BLOCK_DIM = 32
+    a_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+    b_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
 
-    # Shared memory for tiles of matrices a and b
-    shared_a = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
-    shared_b = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+    row = cuda.threadIdx.x
+    col = cuda.threadIdx.y
+    global_row = cuda.blockIdx.x * BLOCK_DIM + row
+    global_col = cuda.blockIdx.y * BLOCK_DIM + col
 
-    # Global row and column indices for the current thread
-    row = cuda.threadIdx.y
-    col = cuda.threadIdx.x
+    accumulator = 0.0
 
-    # Initialize result accumulator
-    result = 0.0
+    for block_offset in range(0, size, BLOCK_DIM):
+        if global_row < size and block_offset + col < size:
+            a_shared[row, col] = a[global_row * size + block_offset + col]
+        else:
+            a_shared[row, col] = 0.0
 
-    # Load the row of a and column of b into shared memory
-    if row < size and col < size:
-        shared_a[row, col] = a[row * size + col]
-        shared_b[row, col] = b[row * size + col]
-    else:
-        shared_a[row, col] = 0.0
-        shared_b[row, col] = 0.0
+        if global_col < size and block_offset + row < size:
+            b_shared[row, col] = b[(block_offset + row) * size + global_col]
+        else:
+            b_shared[row, col] = 0.0
 
-    # Synchronize threads to ensure shared memory is fully loaded
-    cuda.syncthreads()
+        cuda.syncthreads()
 
-    # Compute the dot product for the element (row, col) in the output
-    for k in range(size):
-        result += shared_a[row, k] * shared_b[k, col]
+        for k in range(BLOCK_DIM):
+            accumulator += a_shared[row, k] * b_shared[k, col]
+        cuda.syncthreads()
 
-    # Synchronize before writing the result
-    cuda.syncthreads()
+    if global_row < size and global_col < size:
+        out[global_row * size + global_col] = accumulator
 
-    # Write the result to global memory
-    if row < size and col < size:
-        out[row * size + col] = result
+
 
 
 
