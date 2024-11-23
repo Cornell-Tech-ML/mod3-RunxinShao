@@ -430,3 +430,20 @@ xor dataset
 time and parameters
 ![xorcpu1](image-7.png)
 ![xorcpu2](image-8.png)
+
+
+gpu performance
+simple
+ --BACKEND gpu --HIDDEN 100 --DATASET simple --RATE 0.05
+ ![simple](image-12.png)
+split
+ --BACKEND gpu --HIDDEN 100 --DATASET split --RATE 0.05
+ ![split](image-10.png)
+ ![split1](image-11.png)
+ xor
+  --BACKEND gpu --HIDDEN 100 --DATASET xor --RATE 0.05
+![xor](image-13.png)
+
+larger model:
+--BACKEND gpu --HIDDEN 300 --DATASET xor --RATE 0.05
+![xor300](image-14.png)
