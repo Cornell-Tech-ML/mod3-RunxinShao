@@ -1,17 +1,15 @@
 from __future__ import annotations
-
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 
 class Module:
-    """Modules form a tree that store parameters and other
-    submodules. They make up the basis of neural network stacks.
+    """Modules form a tree that store parameters and other submodules. They make up the basis of neural network stacks.
 
     Attributes
     ----------
-        _modules : Storage of the child modules
-        _parameters : Storage of the module's parameters
-        training : Whether the module is in training mode or evaluation mode
+    _modules : Storage of the child modules
+    _parameters : Storage of the module's parameters
+    training : whether the module is in training mode or evaluation mode
 
     """
 
@@ -31,37 +29,49 @@ class Module:
 
     def train(self) -> None:
         """Set the mode of this module and all descendent modules to `train`."""
-        raise NotImplementedError("Need to include this file from past assignment.")
+        for m in self.modules():
+            m.train()
+        self.training = True
 
     def eval(self) -> None:
         """Set the mode of this module and all descendent modules to `eval`."""
-        raise NotImplementedError("Need to include this file from past assignment.")
+        for m in self.modules():
+            m.eval()
+        self.training = False
 
     def named_parameters(self) -> Sequence[Tuple[str, Parameter]]:
         """Collect all the parameters of this module and its descendents.
 
         Returns
         -------
-            The name and `Parameter` of each ancestor parameter.
+        The name and `Parameter` of each ancestor parameter.
 
         """
-        raise NotImplementedError("Need to include this file from past assignment.")
+        # Collect our parameters and give them a name.
+        parameters = {}
+        for k, v in self._parameters.items():
+            parameters[k] = v
+        # Recurse down to children submodules
+        for mod_name, m in self._modules.items():
+            for k, v in m.named_parameters():
+                parameters[f"{mod_name}.{k}"] = v
+        return list(parameters.items())
 
     def parameters(self) -> Sequence[Parameter]:
         """Enumerate over all the parameters of this module and its descendents."""
-        raise NotImplementedError("Need to include this file from past assignment.")
+        return [j for _, j in self.named_parameters()]
 
     def add_parameter(self, k: str, v: Any) -> Parameter:
         """Manually add a parameter. Useful helper for scalar parameters.
 
         Args:
         ----
-            k: Local name of the parameter.
-            v: Value for the parameter.
+        k: Local name of the parameter.
+        v: Value for the parameter.
 
         Returns:
         -------
-            Newly created parameter.
+        Newly created parameter.
 
         """
         val = Parameter(v, k)
@@ -79,12 +89,12 @@ class Module:
     def __getattr__(self, key: str) -> Any:
         if key in self.__dict__["_parameters"]:
             return self.__dict__["_parameters"][key]
-
         if key in self.__dict__["_modules"]:
             return self.__dict__["_modules"][key]
         return None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Call the forward method of the module."""
         return self.forward(*args, **kwargs)
 
     def __repr__(self) -> str:
@@ -92,14 +102,10 @@ class Module:
             s2 = s_.split("\n")
             if len(s2) == 1:
                 return s_
-            first = s2.pop(0)
             s2 = [(numSpaces * " ") + line for line in s2]
-            s = "\n".join(s2)
-            s = first + "\n" + s
-            return s
+            return "\n".join(s2)
 
         child_lines = []
-
         for key, module in self._modules.items():
             mod_str = repr(module)
             mod_str = _addindent(mod_str, 2)
@@ -118,8 +124,7 @@ class Module:
 class Parameter:
     """A Parameter is a special container stored in a `Module`.
 
-    It is designed to hold a `Variable`, but we allow it to hold
-    any value for testing.
+    It is designed to hold a `Variable`, but we allow it to hold any value for testing.
     """
 
     def __init__(self, x: Any, name: Optional[str] = None) -> None:
