@@ -451,37 +451,50 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
 
     """
     # TODO: Implement for Task 3.3.
-    BLOCK_DIM = 32
-    a_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
-    b_shared = cuda.shared.array((BLOCK_DIM, BLOCK_DIM), numba.float64)
+    TILE_SIZE = 32  # Fixed tile size for small matrices.
 
-    row = cuda.threadIdx.x
-    col = cuda.threadIdx.y
-    global_row = cuda.blockIdx.x * BLOCK_DIM + row
-    global_col = cuda.blockIdx.y * BLOCK_DIM + col
+    # Shared memory for storing tiles of A and B
+    tile_a = cuda.shared.array((TILE_SIZE, TILE_SIZE), numba.float64)
+    tile_b = cuda.shared.array((TILE_SIZE, TILE_SIZE), numba.float64)
 
-    accumulator = 0.0
+    # Thread and block indices
+    thread_row = cuda.threadIdx.x
+    thread_col = cuda.threadIdx.y
 
-    for block_offset in range(0, size, BLOCK_DIM):
-        if global_row < size and block_offset + col < size:
-            a_shared[row, col] = a[global_row * size + block_offset + col]
+    # Compute global row and column indices in the output matrix
+    global_row = cuda.blockIdx.x * TILE_SIZE + thread_row
+    global_col = cuda.blockIdx.y * TILE_SIZE + thread_col
+
+    # Initialize the local result for this thread
+    local_result = 0.0
+
+    # Iterate through tiles in the shared dimension
+    for tile_offset in range(0, size, TILE_SIZE):
+        # Load a tile of A into shared memory
+        if global_row < size and tile_offset + thread_col < size:
+            tile_a[thread_row, thread_col] = a[global_row * size + tile_offset + thread_col]
         else:
-            a_shared[row, col] = 0.0
+            tile_a[thread_row, thread_col] = 0.0
 
-        if global_col < size and block_offset + row < size:
-            b_shared[row, col] = b[(block_offset + row) * size + global_col]
+        # Load a tile of B into shared memory
+        if global_col < size and tile_offset + thread_row < size:
+            tile_b[thread_row, thread_col] = b[(tile_offset + thread_row) * size + global_col]
         else:
-            b_shared[row, col] = 0.0
+            tile_b[thread_row, thread_col] = 0.0
 
+        # Synchronize to ensure all threads have loaded their data
         cuda.syncthreads()
 
-        for k in range(BLOCK_DIM):
-            accumulator += a_shared[row, k] * b_shared[k, col]
+        # Perform partial matrix multiplication for this tile
+        for k in range(TILE_SIZE):
+            local_result += tile_a[thread_row, k] * tile_b[k, thread_col]
+
+        # Synchronize before loading the next tile
         cuda.syncthreads()
 
+    # Write the computed value to the output matrix
     if global_row < size and global_col < size:
-        out[global_row * size + global_col] = accumulator
-
+        out[global_row * size + global_col] = local_result
 
 
 
