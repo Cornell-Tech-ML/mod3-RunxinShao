@@ -385,50 +385,38 @@ def tensor_reduce(
         a_shape: Shape,
         a_strides: Strides,
         reduce_dim: int,
-        reduce_init: float,
+        reduce_value: float,
     ) -> None:
-        BLOCK_DIM = cuda.blockDim.x
-        thread_id = cuda.threadIdx.x
-        i = cuda.blockIdx.x
+        BLOCK_DIM = 1024
+        cache = cuda.shared.array(BLOCK_DIM, numba.float64)
+        i = cuda.threadIdx.x
+        block_id = cuda.blockIdx.x
+        if block_id < out_size:
+            out_index = cuda.local.array(MAX_DIMS, numba.int32)
+            to_index(block_id, out_shape, out_index)
+            cache[i] = reduce_value
 
-        if i >= out_size:
-            return
-
-        out_index = cuda.local.array(MAX_DIMS, numba.int32)
-        to_index(i, out_shape, out_index)
-
-        # Initialize cache
-        cache = cuda.shared.array(THREADS_PER_BLOCK, numba.float32)
-        cache[thread_id] = reduce_init
-
-        # Calculate the dimension size after reduction
-        reduce_dim_size = a_shape[reduce_dim]
-
-        # Stride over the reduction dimension
-        idx = thread_id
-        while idx < reduce_dim_size:
-            a_index = out_index.copy()
-            a_index[reduce_dim] = idx
-            a_pos = index_to_position(a_index, a_strides)
-            cache[thread_id] = fn(cache[thread_id], a_storage[a_pos])
-            idx += BLOCK_DIM
-
-        cuda.syncthreads()
-
-        # Perform reduction in shared memory
-        stride = BLOCK_DIM // 2
-        while stride > 0:
-            if thread_id < stride:
-                cache[thread_id] = fn(cache[thread_id], cache[thread_id + stride])
+            for j in range(i, a_shape[reduce_dim], BLOCK_DIM):
+                out_index[reduce_dim] = j
+                a_pos = index_to_position(out_index, a_strides)
+                cache[i] = fn(cache[i], a_storage[a_pos])
             cuda.syncthreads()
-            stride //= 2
 
-        if thread_id == 0:
-            out_pos = index_to_position(out_index, out_strides)
-            out[out_pos] = cache[0]
+            stride = BLOCK_DIM // 2
+            while stride > 0:
+                if i < stride:
+                    cache[i] = fn(cache[i], cache[i + stride])
+                cuda.syncthreads()
+                stride //= 2
 
-    return cuda.jit()(_reduce)  # type: ignore
+            if i == 0:
+                out_pos = index_to_position(out_index, out_strides)
+                out[out_pos] = cache[0]
 
+
+
+
+    return jit(_reduce)  # type: ignore
 
 
 def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
@@ -511,7 +499,7 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
 
 
 
-jit_mm_practice = cuda.jit(_mm_practice)
+jit_mm_practice = jit(_mm_practice)
 
 
 def mm_practice(a: Tensor, b: Tensor) -> TensorData:
@@ -584,6 +572,10 @@ def _tensor_matrix_multiply(
     # Accumulator for the result of the current thread
     local_result = 0.0
 
+    # Stride offsets for batch handling
+    a_batch_offset = batch_idx * (a_strides[0] if a_shape[0] > 1 else 0)
+    b_batch_offset = batch_idx * (b_strides[0] if b_shape[0] > 1 else 0)
+
     # Compute the number of tiles needed to cover the shared dimension
     num_tiles = (a_shape[-1] + TILE_SIZE - 1) // TILE_SIZE
 
@@ -595,22 +587,14 @@ def _tensor_matrix_multiply(
 
         # Load a tile of A into shared memory
         if global_row < a_shape[-2] and a_col < a_shape[-1]:
-            a_index = (
-                batch_idx * (a_strides[0] if a_shape[0] > 1 else 0)
-                + global_row * a_strides[1]
-                + a_col * a_strides[2]
-            )
+            a_index = a_batch_offset + global_row * a_strides[1] + a_col * a_strides[2]
             tile_a[local_row, local_col] = a_storage[a_index]
         else:
             tile_a[local_row, local_col] = 0.0
 
         # Load a tile of B into shared memory
         if b_row < b_shape[-2] and global_col < b_shape[-1]:
-            b_index = (
-                batch_idx * (b_strides[0] if b_shape[0] > 1 else 0)
-                + b_row * b_strides[1]
-                + global_col * b_strides[2]
-            )
+            b_index = b_batch_offset + b_row * b_strides[1] + global_col * b_strides[2]
             tile_b[local_row, local_col] = b_storage[b_index]
         else:
             tile_b[local_row, local_col] = 0.0
@@ -620,7 +604,8 @@ def _tensor_matrix_multiply(
 
         # Perform the dot product for the current tile
         for k in range(TILE_SIZE):
-            local_result += tile_a[local_row, k] * tile_b[k, local_col]
+            if tile_idx * TILE_SIZE + k < a_shape[-1]:  # Ensure valid index
+                local_result += tile_a[local_row, k] * tile_b[k, local_col]
 
         # Synchronize before loading the next tile
         cuda.syncthreads()
