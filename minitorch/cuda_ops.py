@@ -308,34 +308,29 @@ def _sum_practice(out: Storage, a: Storage, size: int) -> None:
         size (int):  length of a.
 
     """
-    BLOCK_DIM = 32
+    BLOCK_DIM = cuda.blockDim.x
+    cache = cuda.shared.array(THREADS_PER_BLOCK, numba.float32)
 
-    # Shared memory for block-level reduction
-    cache = cuda.shared.array(BLOCK_DIM, numba.float64)
-
-    # Global thread index
     i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
-    # Thread index within the block
     thread_id = cuda.threadIdx.x
 
-    # Load input data into shared memory
     if i < size:
         cache[thread_id] = a[i]
     else:
         cache[thread_id] = 0.0
+
     cuda.syncthreads()
 
-    # Perform reduction in shared memory
-    stride = 1
-    while stride < BLOCK_DIM:
-        if thread_id % (2 * stride) == 0 and thread_id + stride < BLOCK_DIM:
+    stride = BLOCK_DIM // 2
+    while stride > 0:
+        if thread_id < stride:
             cache[thread_id] += cache[thread_id + stride]
         cuda.syncthreads()
-        stride *= 2
+        stride //= 2
 
-    # Write the result from thread 0 of each block to the output
     if thread_id == 0:
         out[cuda.blockIdx.x] = cache[0]
+
 
 jit_sum_practice = cuda.jit()(_sum_practice)
 
@@ -387,36 +382,50 @@ def tensor_reduce(
         reduce_dim: int,
         reduce_value: float,
     ) -> None:
-        BLOCK_DIM = 1024
-        cache = cuda.shared.array(BLOCK_DIM, numba.float64)
-        i = cuda.threadIdx.x
-        block_id = cuda.blockIdx.x
-        if block_id < out_size:
-            out_index = cuda.local.array(MAX_DIMS, numba.int32)
-            to_index(block_id, out_shape, out_index)
-            cache[i] = reduce_value
+        BLOCK_DIM = cuda.blockDim.x
+        thread_id = cuda.threadIdx.x
+        i = cuda.blockIdx.x
 
-            for j in range(i, a_shape[reduce_dim], BLOCK_DIM):
-                out_index[reduce_dim] = j
-                a_pos = index_to_position(out_index, a_strides)
-                cache[i] = fn(cache[i], a_storage[a_pos])
+        if i >= out_size:
+            return
+
+        out_index = cuda.local.array(MAX_DIMS, numba.int32)
+        to_index(i, out_shape, out_index)
+
+        # Initialize cache
+        cache = cuda.shared.array(THREADS_PER_BLOCK, numba.float32)
+        cache[thread_id] = reduce_init
+
+        # Calculate the dimension size after reduction
+        reduce_dim_size = a_shape[reduce_dim]
+
+        # Stride over the reduction dimension
+        idx = thread_id
+        while idx < reduce_dim_size:
+            a_index = out_index.copy()
+            a_index[reduce_dim] = idx
+            a_pos = index_to_position(a_index, a_strides)
+            cache[thread_id] = fn(cache[thread_id], a_storage[a_pos])
+            idx += BLOCK_DIM
+
+        cuda.syncthreads()
+
+        # Perform reduction in shared memory
+        stride = BLOCK_DIM // 2
+        while stride > 0:
+            if thread_id < stride:
+                cache[thread_id] = fn(cache[thread_id], cache[thread_id + stride])
             cuda.syncthreads()
+            stride //= 2
 
-            stride = BLOCK_DIM // 2
-            while stride > 0:
-                if i < stride:
-                    cache[i] = fn(cache[i], cache[i + stride])
-                cuda.syncthreads()
-                stride //= 2
-
-            if i == 0:
-                out_pos = index_to_position(out_index, out_strides)
-                out[out_pos] = cache[0]
+        if thread_id == 0:
+            out_pos = index_to_position(out_index, out_strides)
+            out[out_pos] = cache[0]
 
 
 
 
-    return jit(_reduce)  # type: ignore
+    return cuda.jit(_reduce)  # type: ignore
 
 
 def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
@@ -499,7 +508,7 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
 
 
 
-jit_mm_practice = jit(_mm_practice)
+jit_mm_practice = cuda.jit(_mm_practice)
 
 
 def mm_practice(a: Tensor, b: Tensor) -> TensorData:
@@ -624,4 +633,4 @@ def _tensor_matrix_multiply(
 
 
 
-tensor_matrix_multiply = jit(_tensor_matrix_multiply)
+tensor_matrix_multiply = cuda.jit(_tensor_matrix_multiply)
