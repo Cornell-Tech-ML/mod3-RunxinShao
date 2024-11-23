@@ -376,7 +376,7 @@ def tensor_reduce(
 
     """
 
-     def _reduce(
+    def _reduce(
         out: Storage,
         out_shape: Shape,
         out_strides: Strides,
