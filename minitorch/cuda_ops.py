@@ -539,73 +539,75 @@ def _tensor_matrix_multiply(
     Returns:
         None : Fills in `out`
     """
-     # Define block size
-    BLOCK_SIZE = 32
+    TILE_SIZE = 32  # Define tile size for shared memory blocks.
 
-    # Determine the batch index
-    batch_index = cuda.blockIdx.z
+    # Identify the current batch (for batch processing support)
+    batch_idx = cuda.blockIdx.z
 
-    # Thread and block indices
-    local_x = cuda.threadIdx.x  # Thread index within the block (row)
-    local_y = cuda.threadIdx.y  # Thread index within the block (column)
-    global_row = cuda.blockIdx.x * BLOCK_SIZE + local_x  # Global row index
-    global_col = cuda.blockIdx.y * BLOCK_SIZE + local_y  # Global column index
+    # Thread indices within the current block
+    local_row = cuda.threadIdx.x
+    local_col = cuda.threadIdx.y
 
-    # Shared memory for sub-blocks of input tensors
-    block_a = cuda.shared.array((BLOCK_SIZE, BLOCK_SIZE), numba.float64)
-    block_b = cuda.shared.array((BLOCK_SIZE, BLOCK_SIZE), numba.float64)
+    # Compute global row and column indices in the output matrix
+    global_row = cuda.blockIdx.x * TILE_SIZE + local_row
+    global_col = cuda.blockIdx.y * TILE_SIZE + local_col
 
-    # Initialize result accumulator
-    result = 0.0
+    # Shared memory allocation for tiles of A and B
+    tile_a = cuda.shared.array((TILE_SIZE, TILE_SIZE), numba.float64)
+    tile_b = cuda.shared.array((TILE_SIZE, TILE_SIZE), numba.float64)
 
-    # Total number of sub-blocks to iterate through
-    num_blocks = (a_shape[-1] + BLOCK_SIZE - 1) // BLOCK_SIZE
+    # Accumulator for the result of the current thread
+    local_result = 0.0
 
-    # Iterate through each sub-block
-    for block_id in range(num_blocks):
-        # Calculate indices for the current block
-        a_row = global_row
-        a_col = block_id * BLOCK_SIZE + local_y
-        b_row = block_id * BLOCK_SIZE + local_x
-        b_col = global_col
+    # Compute the number of tiles needed to cover the shared dimension
+    num_tiles = (a_shape[-1] + TILE_SIZE - 1) // TILE_SIZE
 
-        # Load data into shared memory for `a`
-        if a_row < a_shape[-2] and a_col < a_shape[-1]:
-            a_index = cuda.local.array(MAX_DIMS, numba.int32)
-            a_index[0] = batch_index if a_shape[0] > 1 else 0
-            a_index[1] = a_row
-            a_index[2] = a_col
-            block_a[local_x, local_y] = a_storage[index_to_position(a_index, a_strides)]
+    # Iterate through each tile in the shared dimension
+    for tile_idx in range(num_tiles):
+        # Determine the column in A and the row in B for this tile
+        a_col = tile_idx * TILE_SIZE + local_col
+        b_row = tile_idx * TILE_SIZE + local_row
+
+        # Load a tile of A into shared memory
+        if global_row < a_shape[-2] and a_col < a_shape[-1]:
+            a_index = (
+                batch_idx * (a_strides[0] if a_shape[0] > 1 else 0)
+                + global_row * a_strides[1]
+                + a_col * a_strides[2]
+            )
+            tile_a[local_row, local_col] = a_storage[a_index]
         else:
-            block_a[local_x, local_y] = 0.0
+            tile_a[local_row, local_col] = 0.0
 
-        # Load data into shared memory for `b`
-        if b_row < b_shape[-2] and b_col < b_shape[-1]:
-            b_index = cuda.local.array(MAX_DIMS, numba.int32)
-            b_index[0] = batch_index if b_shape[0] > 1 else 0
-            b_index[1] = b_row
-            b_index[2] = b_col
-            block_b[local_x, local_y] = b_storage[index_to_position(b_index, b_strides)]
+        # Load a tile of B into shared memory
+        if b_row < b_shape[-2] and global_col < b_shape[-1]:
+            b_index = (
+                batch_idx * (b_strides[0] if b_shape[0] > 1 else 0)
+                + b_row * b_strides[1]
+                + global_col * b_strides[2]
+            )
+            tile_b[local_row, local_col] = b_storage[b_index]
         else:
-            block_b[local_x, local_y] = 0.0
+            tile_b[local_row, local_col] = 0.0
 
-        # Synchronize threads to ensure all data is loaded into shared memory
+        # Synchronize to ensure all threads have loaded their data
         cuda.syncthreads()
 
-        # Compute the partial result for this block
-        for k in range(BLOCK_SIZE):
-            result += block_a[local_x, k] * block_b[k, local_y]
+        # Perform the dot product for the current tile
+        for k in range(TILE_SIZE):
+            local_result += tile_a[local_row, k] * tile_b[k, local_col]
 
-        # Synchronize before loading the next block
+        # Synchronize before loading the next tile
         cuda.syncthreads()
 
-    # Write the accumulated result to the output tensor
+    # Write the computed value to the output tensor
     if global_row < out_shape[-2] and global_col < out_shape[-1]:
-        out_index = cuda.local.array(MAX_DIMS, numba.int32)
-        out_index[0] = batch_index
-        out_index[1] = global_row
-        out_index[2] = global_col
-        out[index_to_position(out_index, out_strides)] = result
+        out_index = (
+            batch_idx * out_strides[0]
+            + global_row * out_strides[1]
+            + global_col * out_strides[2]
+        )
+        out[out_index] = local_result
 
 
 

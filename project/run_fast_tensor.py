@@ -67,6 +67,7 @@ class FastTrain:
         BATCH = 10
         losses = []
 
+        epoch_time_sum = 0  # 记录时间累计
         for epoch in range(max_epochs):
             epoch_start_time = time.time()  # 开始计时
 
@@ -91,18 +92,20 @@ class FastTrain:
                 optim.step()
 
             epoch_end_time = time.time()  # 结束计时
-            epoch_time = epoch_end_time - epoch_start_time  # 计算耗时
+            epoch_time = epoch_end_time - epoch_start_time  # 单个epoch耗时
+            epoch_time_sum += epoch_time  # 累计时间
 
             losses.append(total_loss)
             # Logging
             if epoch % 10 == 0 or epoch == max_epochs - 1:
+                avg_epoch_time = epoch_time_sum / 10  # 计算10个epoch的平均时间
+                epoch_time_sum = 0  # 重置累计时间
                 X = minitorch.tensor(data.X, backend=self.backend)
                 y = minitorch.tensor(data.y, backend=self.backend)
                 out = self.model.forward(X).view(y.shape[0])
                 y2 = minitorch.tensor(data.y)
                 correct = int(((out.detach() > minitorch.tensor(0.5)) == y2).sum()[0])
-                log_fn(epoch, total_loss, correct, losses, epoch_time=epoch_time)
-
+                log_fn(epoch, total_loss, correct, losses, avg_epoch_time=avg_epoch_time)
 
 if __name__ == "__main__":
     import argparse
