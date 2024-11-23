@@ -230,9 +230,9 @@ def tensor_map(
         in_strides: Strides,
     ) -> None:
         i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+        out_index = cuda.local.array(MAX_DIMS, numba.int32)
+        in_index = cuda.local.array(MAX_DIMS, numba.int32)
         if i < out_size:
-            out_index = cuda.local.array(MAX_DIMS, numba.int32)
-            in_index = cuda.local.array(MAX_DIMS, numba.int32)
             to_index(i, out_shape, out_index)
             broadcast_index(out_index, out_shape, in_shape, in_index)
             out_pos = index_to_position(out_index, out_strides)
@@ -275,10 +275,10 @@ def tensor_zip(
         b_strides: Strides,
     ) -> None:
         i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+        out_index = cuda.local.array(MAX_DIMS, numba.int32)
+        a_index = cuda.local.array(MAX_DIMS, numba.int32)
+        b_index = cuda.local.array(MAX_DIMS, numba.int32)
         if i < out_size:
-            out_index = cuda.local.array(MAX_DIMS, numba.int32)
-            a_index = cuda.local.array(MAX_DIMS, numba.int32)
-            b_index = cuda.local.array(MAX_DIMS, numba.int32)
             to_index(i, out_shape, out_index)
             broadcast_index(out_index, out_shape, a_shape, a_index)
             broadcast_index(out_index, out_shape, b_shape, b_index)
@@ -480,15 +480,12 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
 
     # Compute the dot product for the element (row, col) in the output
     for k in range(size):
-        result += shared_a[row, k] * shared_b[k, col]
-
-    # Synchronize before writing the result
-    cuda.syncthreads()
+        if k < size:
+            result += shared_a[row, k] * shared_b[k, col]
 
     # Write the result to global memory
     if row < size and col < size:
         out[row * size + col] = result
-
 
 jit_mm_practice = jit(_mm_practice)
 
@@ -545,8 +542,8 @@ def _tensor_matrix_multiply(
     Returns:
         None : Fills in `out`
     """
-    # Define block size
-    BLOCK_SIZE = 32
+    # Define block size dynamically
+    BLOCK_SIZE = 32  # You can tune this value based on the target hardware.
 
     # Determine the batch index
     batch_index = cuda.blockIdx.z
@@ -556,6 +553,10 @@ def _tensor_matrix_multiply(
     local_y = cuda.threadIdx.y  # Thread index within the block (column)
     global_row = cuda.blockIdx.x * BLOCK_SIZE + local_x  # Global row index
     global_col = cuda.blockIdx.y * BLOCK_SIZE + local_y  # Global column index
+
+    # Early exit for threads out of bounds
+    if global_row >= out_shape[-2] or global_col >= out_shape[-1]:
+        return
 
     # Shared memory for sub-blocks of input tensors
     block_a = cuda.shared.array((BLOCK_SIZE, BLOCK_SIZE), numba.float64)
@@ -569,29 +570,27 @@ def _tensor_matrix_multiply(
 
     # Iterate through each sub-block
     for block_id in range(num_blocks):
-        # Calculate indices for the current block
-        a_row = global_row
-        a_col = block_id * BLOCK_SIZE + local_y
-        b_row = block_id * BLOCK_SIZE + local_x
-        b_col = global_col
-
         # Load data into shared memory for `a`
-        if a_row < a_shape[-2] and a_col < a_shape[-1]:
-            a_index = cuda.local.array(MAX_DIMS, numba.int32)
-            a_index[0] = batch_index if a_shape[0] > 1 else 0
-            a_index[1] = a_row
-            a_index[2] = a_col
-            block_a[local_x, local_y] = a_storage[index_to_position(a_index, a_strides)]
+        a_col = block_id * BLOCK_SIZE + local_y
+        if global_row < a_shape[-2] and a_col < a_shape[-1]:
+            a_pos = (
+                batch_index * (a_strides[0] if a_shape[0] > 1 else 0)
+                + global_row * a_strides[1]
+                + a_col * a_strides[2]
+            )
+            block_a[local_x, local_y] = a_storage[a_pos]
         else:
             block_a[local_x, local_y] = 0.0
 
         # Load data into shared memory for `b`
-        if b_row < b_shape[-2] and b_col < b_shape[-1]:
-            b_index = cuda.local.array(MAX_DIMS, numba.int32)
-            b_index[0] = batch_index if b_shape[0] > 1 else 0
-            b_index[1] = b_row
-            b_index[2] = b_col
-            block_b[local_x, local_y] = b_storage[index_to_position(b_index, b_strides)]
+        b_row = block_id * BLOCK_SIZE + local_x
+        if b_row < b_shape[-2] and global_col < b_shape[-1]:
+            b_pos = (
+                batch_index * (b_strides[0] if b_shape[0] > 1 else 0)
+                + b_row * b_strides[1]
+                + global_col * b_strides[2]
+            )
+            block_b[local_x, local_y] = b_storage[b_pos]
         else:
             block_b[local_x, local_y] = 0.0
 
@@ -606,12 +605,14 @@ def _tensor_matrix_multiply(
         cuda.syncthreads()
 
     # Write the accumulated result to the output tensor
-    if global_row < out_shape[-2] and global_col < out_shape[-1]:
-        out_index = cuda.local.array(MAX_DIMS, numba.int32)
-        out_index[0] = batch_index
-        out_index[1] = global_row
-        out_index[2] = global_col
-        out[index_to_position(out_index, out_strides)] = result
+    out_pos = (
+        batch_index * out_strides[0]
+        + global_row * out_strides[1]
+        + global_col * out_strides[2]
+    )
+    out[out_pos] = result
+
+
 
 
 tensor_matrix_multiply = jit(_tensor_matrix_multiply)
