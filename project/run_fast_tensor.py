@@ -105,7 +105,7 @@ class FastTrain:
                 out = self.model.forward(X).view(y.shape[0])
                 y2 = minitorch.tensor(data.y)
                 correct = int(((out.detach() > minitorch.tensor(0.5)) == y2).sum()[0])
-                log_fn(epoch, total_loss, correct, losses, avg_epoch_time=avg_epoch_time)
+                log_fn(epoch, total_loss, correct, losses, avg_epoch_time)
 
 if __name__ == "__main__":
     import argparse
